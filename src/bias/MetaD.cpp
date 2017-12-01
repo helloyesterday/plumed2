@@ -1828,7 +1828,7 @@ void MetaD::computeReweightingFactor()
     for(unsigned j=0; j<ncv; ++j) vals[j]=dmin[j] + t_index[j]*grid_spacing[j];
 
     double currentb=getBiasAndDerivatives(vals,der.get());
-    sum1 += exp( afactor*currentb );
+    sum1 += exp( afactor*currentb ); // Here go the changes
     sum2 += exp( afactor2*currentb );
   }
   comm.Sum( sum1 ); comm.Sum( sum2 );
