@@ -87,6 +87,10 @@ private:
   std::vector<Grid*> grid_pntrs_;
   unsigned int ndist_;
   void setupAdditionalGrids(const std::vector<Value*>&, const std::vector<std::string>&, const std::vector<std::string>&, const std::vector<unsigned int>&);
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  std::vector<Grid*> rw_grid_pntrs_;
+  void setupAdditionalReweightGrids(const std::vector<Value*>&, const std::vector<std::string>&, const std::vector<std::string>&, const std::vector<unsigned int>&);
+  //
 public:
   static void registerKeywords(Keywords&);
   explicit TD_ProductDistribution(const ActionOptions& ao);
@@ -98,6 +102,11 @@ public:
   void linkBiasGrid(Grid*);
   void linkBiasWithoutCutoffGrid(Grid*);
   void linkFesGrid(Grid*);
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  void linkBiasRWGrid(Grid*);
+  void linkBiasWithoutCutoffRWGrid(Grid*);
+  void linkFesRWGrid(Grid*);
+  //
 };
 
 
@@ -117,7 +126,8 @@ TD_ProductDistribution::TD_ProductDistribution(const ActionOptions& ao):
   PLUMED_VES_TARGETDISTRIBUTION_INIT(ao),
   distribution_pntrs_(0),
   grid_pntrs_(0),
-  ndist_(0)
+  ndist_(0),
+  rw_grid_pntrs_(0)
 {
   std::vector<std::string> targetdist_labels;
   parseVector("DISTRIBUTIONS",targetdist_labels);
@@ -134,6 +144,9 @@ TD_ProductDistribution::TD_ProductDistribution(const ActionOptions& ao):
 
   ndist_ = distribution_pntrs_.size();
   grid_pntrs_.assign(ndist_,NULL);
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  rw_grid_pntrs_.assign(ndist_,NULL);
+  //
   setDimension(ndist_);
 
   checkRead();
@@ -164,9 +177,32 @@ void TD_ProductDistribution::setupAdditionalGrids(const std::vector<Value*>& arg
   }
 }
 
+// Added by Y. Isaac Yang to calculate the reweighting factor
+void TD_ProductDistribution::setupAdditionalReweightGrids(const std::vector<Value*>& arguments, const std::vector<std::string>& min, const std::vector<std::string>& max, const std::vector<unsigned int>& nbins) {
+  for(unsigned int i=0; i<ndist_; i++){
+    std::vector<Value*> arg1d(1);
+    std::vector<std::string> min1d(1);
+    std::vector<std::string> max1d(1);
+    std::vector<unsigned int> nbins1d(1);
+    arg1d[0]=arguments[i];
+    min1d[0]=min[i];
+    max1d[0]=max[i];
+    nbins1d[0]=nbins[i];
+    distribution_pntrs_[i]->setupReweightGrids(arg1d,min1d,max1d,nbins1d);
+    rw_grid_pntrs_[i]=distribution_pntrs_[i]->getReweightGridPntr();
+    if(distribution_pntrs_[i]->getDimension()!=1 || rw_grid_pntrs_[i]->getDimension()!=1){
+      plumed_merror(getName() + ": all target distributions must be one dimensional");
+    }
+  }
+}
+//
 
 void TD_ProductDistribution::updateGrid() {
   for(unsigned int i=0; i<ndist_; i++) {
+	// Added by Y. Isaac Yang to calculate the reweighting factor
+	if(isReweightGridActive())
+	  distribution_pntrs_[i]->setReweightGridActive();
+	//
     distribution_pntrs_[i]->updateTargetDist();
   }
   for(Grid::index_t l=0; l<targetDistGrid().getSize(); l++) {
@@ -179,6 +215,20 @@ void TD_ProductDistribution::updateGrid() {
     logTargetDistGrid().setValue(l,-std::log(value));
   }
   logTargetDistGrid().setMinToZero();
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  if(isReweightGridActive())
+  {
+    for(Grid::index_t l=0; l<reweightGrid().getSize(); l++){
+      std::vector<unsigned int> indices = reweightGrid().getIndices(l);
+      double value = 1.0;
+      for(unsigned int i=0; i<ndist_; i++){
+        value *= rw_grid_pntrs_[i]->getValue(indices[i]);
+      }
+      reweightGrid().setValue(l,value);
+      logReweightGrid().setValue(l,-std::log(value));
+    }
+    logReweightGrid().setMinToZero();
+  }
 }
 
 
@@ -221,6 +271,26 @@ void TD_ProductDistribution::linkFesGrid(Grid* fes_grid_pntr_in) {
   }
 }
 
+// Added by Y. Isaac Yang to calculate the reweighting factor
+void TD_ProductDistribution::linkBiasRWGrid(Grid* bias_rwgrid_pntr_in){
+  TargetDistribution::linkBiasRWGrid(bias_rwgrid_pntr_in);
+  for(unsigned int i=0; i<ndist_; i++){
+    distribution_pntrs_[i]->linkBiasRWGrid(bias_rwgrid_pntr_in);
+  }
+}
+void TD_ProductDistribution::linkBiasWithoutCutoffRWGrid(Grid* bias_withoutcutoff_rwgrid_pntr_in){
+  TargetDistribution::linkBiasWithoutCutoffRWGrid(bias_withoutcutoff_rwgrid_pntr_in);
+  for(unsigned int i=0; i<ndist_; i++){
+    distribution_pntrs_[i]->linkBiasWithoutCutoffRWGrid(bias_withoutcutoff_rwgrid_pntr_in);
+  }
+}
+void TD_ProductDistribution::linkFesRWGrid(Grid* fes_rwgrid_pntr_in){
+  TargetDistribution::linkFesRWGrid(fes_rwgrid_pntr_in);
+  for(unsigned int i=0; i<ndist_; i++){
+    distribution_pntrs_[i]->linkFesRWGrid(fes_rwgrid_pntr_in);
+  }
+}
+//
 
 }
 }

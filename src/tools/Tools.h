@@ -233,6 +233,27 @@ double Tools::fastpow(double base, int exp)
   return result;
 }
 
+// Added by Y. Isaac Yang to calculate the summation of exponents
+// expsum = exp_add(exp1,exp2);
+// exp(expsum)=exp(exp1)+exp(exp2)
+inline double exp_add(double exp1,double exp2)
+{
+	if(exp1>exp2)
+		return exp1+std::log(1.0+exp(exp2-exp1));
+	else
+		return exp2+std::log(1.0+exp(exp1-exp2));
+}
+
+// exp_added(expsum,expvalue)
+// expsum=log(exp(expsum)+exp(expvalue)
+inline void exp_added(double& expsum,double expvalue)
+{
+	if(expsum>expvalue)
+		expsum=expsum+std::log(1.0+exp(expvalue-expsum));
+	else
+		expsum=expvalue+std::log(1.0+exp(expsum-expvalue));
+}
+
 }
 
 #endif

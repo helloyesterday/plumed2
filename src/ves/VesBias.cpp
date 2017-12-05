@@ -81,7 +81,14 @@ VesBias::VesBias(const ActionOptions&ao):
   bias_cutoff_value_(0.0),
   bias_current_max_value(0.0),
   bias_cutoff_swfunc_pntr_(NULL),
-  calc_reweightfactor_(false)
+  calc_reweightfactor_(false),
+  reweight_grid_active_(false),
+  reweight_bins_(0),
+  reweight_min_(0),
+  reweight_max_(0),
+  reweight_factor(0.0),
+  valueRct_(NULL),
+  valueRbias_(NULL)
 {
   log.printf("  VES bias, please read and cite ");
   log << plumed.cite("Valsson and Parrinello, Phys. Rev. Lett. 113, 090601 (2014)");
@@ -112,6 +119,28 @@ VesBias::VesBias(const ActionOptions&ao):
     parseMultipleValues("GRID_MIN",grid_min_,getNumberOfArguments());
     parseMultipleValues("GRID_MAX",grid_max_,getNumberOfArguments());
   }
+  // Added By Y. Isaac Yang to calculte the reweighting factor
+  if(keywords.exists("REWEIGHT_BINS")){
+    parseMultipleValues("REWEIGHT_BINS",reweight_bins_,getNumberOfArguments());
+  }
+
+  if(keywords.exists("REWEIGHT_MIN") && keywords.exists("REWEIGHT_MAX")){
+    parseVector("REWEIGHT_MIN",str_rw_min_);
+    parseVector("REWEIGHT_MAX",str_rw_max_);
+    if(str_rw_max_.size()>0||str_rw_max_.size()>0)
+    {
+	  plumed_massert(str_rw_max_.size()==getNumberOfArguments()&&str_rw_min_.size()==getNumberOfArguments(),
+	    "the dimensions of REWEIGHT MAX/MIN must be equal to the number of arguments");
+      if(!reweight_grid_active_&&keywords.exists("REWEIGHT_BINS"))
+      {
+		reweight_bins_=grid_bins_;
+        reweight_grid_active_=true;
+      }
+	  parseMultipleValues("REWEIGHT_MIN",reweight_min_,getNumberOfArguments());
+      parseMultipleValues("REWEIGHT_MAX",reweight_max_,getNumberOfArguments());
+    }
+  }
+  //
 
   std::vector<std::string> targetdist_labels;
   if(keywords.exists("TARGET_DISTRIBUTION")) {
@@ -224,8 +253,27 @@ VesBias::VesBias(const ActionOptions&ao):
       updateReweightFactor();
     }
   }
-
-
+  
+  // Added By Y. Isaac Yang to calculte the reweighting factor
+  addComponent("rct"); componentIsNotPeriodic("rct");
+  valueRct_=getPntrToComponent("rct");
+  addComponent("rbias"); componentIsNotPeriodic("rbias");
+  valueRbias_=getPntrToComponent("rbias");
+  
+  if(isReweightGridActive())
+  {
+    log.printf("  using a different range of target distribution to calcualte the reweight factor:\n");
+    log.printf("    Reweight min:");
+	for(unsigned i=0;i!=str_rw_min_.size();++i)  log.printf(" %s,",str_rw_min_[i].c_str());
+	log.printf("\n");
+	log.printf("    Reweight max:");
+	for(unsigned i=0;i!=str_rw_max_.size();++i)  log.printf(" %s,",str_rw_max_[i].c_str());
+	log.printf("\n");
+	log.printf("    Reweight bins:");
+	for(unsigned i=0;i!=reweight_bins_.size();++i)  log.printf(" %d,",reweight_bins_[i]);
+	log.printf("\n");
+  }
+  //
 }
 
 
@@ -276,7 +324,13 @@ void VesBias::registerKeywords( Keywords& keys ) {
   keys.reserve("numbered","PROJ_ARG","arguments for doing projections of the FES or the target distribution.");
   //
   keys.reserveFlag("CALC_REWEIGHT_FACTOR",false,"enable the calculation of the reweight factor c(t). You should also give a stride for updating the reweight factor in the optimizer by using the REWEIGHT_FACTOR_STRIDE keyword if the coefficients are updated.");
-
+  // Added By Y. Isaac Yang to calculte the reweighting factor
+  keys.addOutputComponent("rbias","default","the instantaneous value of the bias normalized using the \\f$c(t)\\f$ reweighting factor [rbias=bias-c(t)]. This component can be used to obtain a reweighted histogram.");
+  keys.addOutputComponent("rct","default","the reweighting factor \\f$c(t)\\f$.");
+  keys.reserve("optional","REWEIGHT_BINS","the number of bins used to calculate the reweight factor. The default value is 100 bins per dimension.");
+  keys.reserve("optional","REWEIGHT_MIN","the lower bounds used to calculate the reweight factor.");
+  keys.reserve("optional","REWEIGHT_MAX","the upper bounds used to calculate the reweight factor.");
+  //
 }
 
 
@@ -307,6 +361,15 @@ void VesBias::useGridLimitsKeywords(Keywords& keys) {
   keys.use("GRID_MAX");
 }
 
+// Added By Y. Isaac Yang to calculte the reweighting factor
+void VesBias::useReweightBinKeywords(Keywords& keys) {
+  keys.use("REWEIGHT_BINS");
+}
+void VesBias::useReweightLimitsKeywords(Keywords& keys) {
+  keys.use("REWEIGHT_MIN");
+  keys.use("REWEIGHT_MAX");
+}
+//
 
 void VesBias::useBiasCutoffKeywords(Keywords& keys) {
   keys.use("BIAS_CUTOFF");
@@ -662,6 +725,24 @@ void VesBias::setGridMax(const std::vector<double>& grid_max_in) {
   grid_max_=grid_max_in;
 }
 
+// Added By Y. Isaac Yang to calculte the reweighting factor
+void VesBias::setReweightBins(const std::vector<unsigned int>& reweight_bins_in) {
+  plumed_massert(reweight_bins_in.size()==getNumberOfArguments(),"the number of grid bins given doesn't match the number of arguments");
+  reweight_bins_=reweight_bins_in;
+}
+void VesBias::setReweightBins(const unsigned int nbins) {
+  std::vector<unsigned int> reweight_bins_in(getNumberOfArguments(),nbins);
+  reweight_bins_=reweight_bins_in;
+}
+void VesBias::setReweightMin(const std::vector<double>& reweight_min_in) {
+  plumed_massert(reweight_min_in.size()==getNumberOfArguments(),"the number of lower bounds given for the grid doesn't match the number of arguments");
+  reweight_min_=reweight_min_in;
+}
+void VesBias::setReweightMax(const std::vector<double>& reweight_max_in) {
+  plumed_massert(reweight_max_in.size()==getNumberOfArguments(),"the number of upper bounds given for the grid doesn't match the number of arguments");
+  reweight_max_=reweight_max_in;
+}
+//
 
 std::string VesBias::getCurrentOutputFilename(const std::string& base_filename, const std::string& suffix) const {
   std::string filename = base_filename;

@@ -27,8 +27,9 @@
 #include "GridIntegrationWeights.h"
 #include "BasisFunctions.h"
 #include "TargetDistribution.h"
-
-
+// Added by Y. Isaac Yang
+#include "tools/Tools.h"
+//
 #include "tools/Keywords.h"
 #include "tools/Grid.h"
 #include "tools/Communicator.h"
@@ -75,7 +76,17 @@ LinearBasisSetExpansion::LinearBasisSetExpansion(
   fes_grid_pntr_(NULL),
   log_targetdist_grid_pntr_(NULL),
   targetdist_grid_pntr_(NULL),
-  targetdist_pntr_(NULL)
+  targetdist_pntr_(NULL),
+  reweight_factor(0.0),
+  reweight_min_(nargs_),
+  reweight_max_(nargs_),
+  reweight_bins_(nargs_,100),
+  reweight_grid_active_(false),
+  bias_rwgrid_pntr_(NULL),
+  bias_withoutcutoff_rwgrid_pntr_(NULL),
+  fes_rwgrid_pntr_(NULL),
+  log_reweight_grid_pntr_(NULL),
+  reweight_grid_pntr_(NULL)
 {
   plumed_massert(args_pntrs_.size()==basisf_pntrs_.size(),"number of arguments and basis functions do not match");
   for(unsigned int k=0; k<nargs_; k++) {nbasisf_[k]=basisf_pntrs_[k]->getNumberOfBasisFunctions();}
@@ -116,6 +127,16 @@ LinearBasisSetExpansion::~LinearBasisSetExpansion() {
   if(fes_grid_pntr_!=NULL) {
     delete fes_grid_pntr_;
   }
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  if(bias_rwgrid_pntr_!=NULL){
+    delete bias_rwgrid_pntr_;
+  }
+  if(bias_withoutcutoff_rwgrid_pntr_!=NULL){
+    delete bias_withoutcutoff_rwgrid_pntr_;
+  }
+  if(fes_rwgrid_pntr_!=NULL){
+    delete fes_rwgrid_pntr_;
+  }
 }
 
 
@@ -153,6 +174,17 @@ void LinearBasisSetExpansion::setGridBins(const unsigned int nbins) {
   setGridBins(grid_bins_in);
 }
 
+// Added by Y. Isaac Yang to calculate the reweighting factor
+void LinearBasisSetExpansion::setReweightGrid(const std::vector<unsigned int>& reweight_bins_in,const std::vector<std::string>& reweight_max_in,const std::vector<std::string>& reweight_min_in) {
+  plumed_massert(reweight_bins_in.size()==nargs_,"the number of reweight bins given doesn't match the number of arguments");
+  plumed_massert(bias_rwgrid_pntr_==NULL,"setReweightBins should be used before setting up the grids, otherwise it doesn't work");
+  plumed_massert(fes_rwgrid_pntr_==NULL,"setReweightBins should be used before setting up the grids, otherwise it doesn't work");
+  reweight_bins_=reweight_bins_in;
+  reweight_max_=reweight_max_in;
+  reweight_min_=reweight_min_in;
+  reweight_grid_active_=true;
+}
+//
 
 Grid* LinearBasisSetExpansion::setupGeneralGrid(const std::string& label_suffix, const bool usederiv) {
   bool use_spline = false;
@@ -160,6 +192,13 @@ Grid* LinearBasisSetExpansion::setupGeneralGrid(const std::string& label_suffix,
   return grid_pntr;
 }
 
+// Added by Y. Isaac Yang to calculate the reweighting factor
+Grid* LinearBasisSetExpansion::setupGeneralGrid(const std::string& label_suffix, const std::vector<std::string>& grid_max, const std::vector<std::string>& grid_min, const std::vector<unsigned int>& grid_bins, const bool usederiv) {
+  bool use_spline = false;
+  Grid* grid_pntr = new Grid(label_+"."+label_suffix,args_pntrs_,grid_min,grid_max,grid_bins,use_spline,usederiv);
+  return grid_pntr;
+}
+//
 
 void LinearBasisSetExpansion::setupBiasGrid(const bool usederiv) {
   if(bias_grid_pntr_!=NULL) {return;}
@@ -167,6 +206,15 @@ void LinearBasisSetExpansion::setupBiasGrid(const bool usederiv) {
   if(biasCutoffActive()) {
     bias_withoutcutoff_grid_pntr_ = setupGeneralGrid("bias_withoutcutoff",usederiv);
   }
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  if(isReweightGridActive())
+  {
+	  bias_rwgrid_pntr_= setupGeneralGrid("bias_rw",reweight_max_,reweight_min_,reweight_bins_,usederiv);
+	  if(biasCutoffActive()){
+        bias_withoutcutoff_rwgrid_pntr_ = setupGeneralGrid("bias_withoutcutoff_rw",reweight_max_,reweight_min_,reweight_bins_,usederiv);
+      }
+  }
+  //
 }
 
 
@@ -176,6 +224,10 @@ void LinearBasisSetExpansion::setupFesGrid() {
     setupBiasGrid(true);
   }
   fes_grid_pntr_ = setupGeneralGrid("fes",false);
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  if(isReweightGridActive())
+    fes_rwgrid_pntr_ = setupGeneralGrid("fes",reweight_max_,reweight_min_,reweight_bins_,false);
+  //
 }
 
 
@@ -209,6 +261,24 @@ void LinearBasisSetExpansion::updateBiasGrid() {
     }
     //
   }
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  if(isReweightGridActive())
+  {
+	for(Grid::index_t l=0; l<bias_rwgrid_pntr_->getSize(); l++){
+      std::vector<double> forces(nargs_);
+      std::vector<double> args = bias_rwgrid_pntr_->getPoint(l);
+      bool all_inside=true;
+      double bias=getBiasAndForces(args,all_inside,forces);
+
+      if(bias_rwgrid_pntr_->hasDerivatives()){
+        bias_rwgrid_pntr_->setValueAndDerivatives(l,bias,forces);
+      }
+      else{
+        bias_rwgrid_pntr_->setValue(l,bias);
+      }
+    }
+  }
+  //
   if(vesbias_pntr_!=NULL) {
     vesbias_pntr_->setCurrentBiasMaxValue(bias_grid_pntr_->getMaxValue());
   }
@@ -237,6 +307,22 @@ void LinearBasisSetExpansion::updateBiasWithoutCutoffGrid() {
     else {
       bias_withoutcutoff_grid_pntr_->setValue(l,bias);
     }
+  }
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  if(isReweightGridActive())
+  {
+	for(Grid::index_t l=0; l<bias_withoutcutoff_rwgrid_pntr_->getSize(); l++){
+      std::vector<double> forces(nargs_);
+      std::vector<double> args = bias_withoutcutoff_rwgrid_pntr_->getPoint(l);
+      bool all_inside=true;
+      double bias=getBiasAndForces(args,all_inside,forces);
+      if(bias_withoutcutoff_rwgrid_pntr_->hasDerivatives()){
+        bias_withoutcutoff_rwgrid_pntr_->setValueAndDerivatives(l,bias,forces);
+      }
+      else{
+        bias_withoutcutoff_rwgrid_pntr_->setValue(l,bias);
+      }
+	}
   }
   //
   double bias_max = bias_withoutcutoff_grid_pntr_->getMaxValue();
@@ -267,6 +353,19 @@ void LinearBasisSetExpansion::updateBiasWithoutCutoffGrid() {
         bias_withoutcutoff_grid_pntr_->addValue(l,shift);
       }
     }
+    // Added by Y. Isaac Yang to calculate the reweighting factor
+    if(isReweightGridActive())
+    {
+      for(Grid::index_t l=0; l<bias_withoutcutoff_rwgrid_pntr_->getSize(); l++){
+        if(bias_withoutcutoff_rwgrid_pntr_->hasDerivatives()){
+          std::vector<double> zeros(nargs_,0.0);
+          bias_withoutcutoff_rwgrid_pntr_->addValueAndDerivatives(l,shift,zeros);
+        }
+        else{
+          bias_withoutcutoff_rwgrid_pntr_->addValue(l,shift);
+        }
+      }
+	}
   }
   if(vesbias_pntr_!=NULL) {
     vesbias_pntr_->setCurrentBiasMaxValue(bias_max);
@@ -293,6 +392,20 @@ void LinearBasisSetExpansion::updateFesGrid() {
     fes_grid_pntr_->setValue(l,fes_value);
   }
   fes_grid_pntr_->setMinToZero();
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  if(isReweightGridActive())
+  {
+	bias2fes_scalingf = -1.0;
+    for(Grid::index_t l=0; l<fes_rwgrid_pntr_->getSize(); l++){
+      double fes_value = bias2fes_scalingf*bias_rwgrid_pntr_->getValue(l);
+      if(log_reweight_grid_pntr_!=NULL){
+        fes_value += kBT()*log_reweight_grid_pntr_->getValue(l);
+      }
+      fes_rwgrid_pntr_->setValue(l,fes_value);
+    }
+    fes_rwgrid_pntr_->setMinToZero();
+  }
+  //
   if(action_pntr_!=NULL) {
     setStepOfLastFesGridUpdate(action_pntr_->getStep());
   }
@@ -312,6 +425,18 @@ void LinearBasisSetExpansion::writeBiasWithoutCutoffGridToFile(OFile& ofile, con
   bias_withoutcutoff_grid_pntr_->writeToFile(ofile);
 }
 
+// Added by Y. Isaac Yang to calculate the reweighting factor
+void LinearBasisSetExpansion::writeBiasRWGridToFile(OFile& ofile, const bool append_file) const {
+  plumed_massert(bias_grid_pntr_!=NULL,"the bias grid is not defined");
+  if(append_file){ofile.enforceRestart();}
+  bias_rwgrid_pntr_->writeToFile(ofile);
+}
+void LinearBasisSetExpansion::writeBiasWithoutCutoffRWGridToFile(OFile& ofile, const bool append_file) const {
+  plumed_massert(bias_withoutcutoff_grid_pntr_!=NULL,"the bias without cutoff grid is not defined");
+  if(append_file){ofile.enforceRestart();}
+  bias_withoutcutoff_rwgrid_pntr_->writeToFile(ofile);
+}
+//
 
 void LinearBasisSetExpansion::writeFesGridToFile(OFile& ofile, const bool append_file) const {
   plumed_massert(fes_grid_pntr_!=NULL,"the FES grid is not defined");
@@ -330,7 +455,6 @@ void LinearBasisSetExpansion::writeFesProjGridToFile(const std::vector<std::stri
   delete Fw;
 }
 
-
 void LinearBasisSetExpansion::writeTargetDistGridToFile(OFile& ofile, const bool append_file) const {
   if(targetdist_grid_pntr_==NULL) {return;}
   if(append_file) {ofile.enforceRestart();}
@@ -344,6 +468,18 @@ void LinearBasisSetExpansion::writeLogTargetDistGridToFile(OFile& ofile, const b
   log_targetdist_grid_pntr_->writeToFile(ofile);
 }
 
+// Added by Y. Isaac Yang to calculate the reweighting factor
+void LinearBasisSetExpansion::writeReweightGridToFile(OFile& ofile, const bool append_file) const {
+  if(reweight_grid_pntr_==NULL){return;}
+  if(append_file){ofile.enforceRestart();}
+  reweight_grid_pntr_->writeToFile(ofile);
+}
+void LinearBasisSetExpansion::writeLogReweightGridToFile(OFile& ofile, const bool append_file) const {
+  if(log_reweight_grid_pntr_==NULL){return;}
+  if(append_file){ofile.enforceRestart();}
+  log_reweight_grid_pntr_->writeToFile(ofile);
+}
+//
 
 void LinearBasisSetExpansion::writeTargetDistProjGridToFile(const std::vector<std::string>& proj_arg, OFile& ofile, const bool append_file) const {
   if(targetdist_grid_pntr_==NULL) {return;}
@@ -364,6 +500,21 @@ void LinearBasisSetExpansion::writeTargetDistributionToFile(const std::string& f
   writeTargetDistGridToFile(of1);
   writeLogTargetDistGridToFile(of2);
   of1.close(); of2.close();
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  if(isReweightGridActive())
+  {
+	OFile of3; OFile of4;
+    if(action_pntr_!=NULL){
+      of3.link(*action_pntr_); of4.link(*action_pntr_);
+    }
+    of3.enforceBackup(); of4.enforceBackup();
+    of3.open(FileBase::appendSuffix(filename,".rwgrid"));
+    of4.open(FileBase::appendSuffix(filename,".log_rwgrid"));
+    writeReweightGridToFile(of3);
+    writeLogReweightGridToFile(of4);
+    of3.close(); of4.close();
+  }
+  //
 }
 
 
@@ -494,6 +645,13 @@ void LinearBasisSetExpansion::setupTargetDistribution(TargetDistribution* target
   targetdist_pntr_->setupGrids(args_pntrs_,grid_min_,grid_max_,grid_bins_);
   targetdist_grid_pntr_      = targetdist_pntr_->getTargetDistGridPntr();
   log_targetdist_grid_pntr_  = targetdist_pntr_->getLogTargetDistGridPntr();
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  if(isReweightGridActive())
+  {
+    targetdist_pntr_->setupReweightGrids(args_pntrs_,reweight_min_,reweight_max_,reweight_bins_);
+    reweight_grid_pntr_      = targetdist_pntr_->getReweightGridPntr();
+    log_reweight_grid_pntr_  = targetdist_pntr_->getLogReweightGridPntr();
+  }
   //
   if(targetdist_pntr_->isDynamic()) {
     vesbias_pntr_->enableDynamicTargetDistribution();
@@ -502,14 +660,26 @@ void LinearBasisSetExpansion::setupTargetDistribution(TargetDistribution* target
   if(targetdist_pntr_->biasGridNeeded()) {
     setupBiasGrid(true);
     targetdist_pntr_->linkBiasGrid(bias_grid_pntr_);
+    // Added by Y. Isaac Yang to calculate the reweighting factor
+    if(isReweightGridActive())
+      targetdist_pntr_->linkBiasRWGrid(bias_rwgrid_pntr_);
+    //
   }
   if(targetdist_pntr_->biasWithoutCutoffGridNeeded()) {
     setupBiasGrid(true);
     targetdist_pntr_->linkBiasWithoutCutoffGrid(bias_withoutcutoff_grid_pntr_);
+    // Added by Y. Isaac Yang to calculate the reweighting factor
+    if(isReweightGridActive())
+      targetdist_pntr_->linkBiasWithoutCutoffRWGrid(bias_withoutcutoff_rwgrid_pntr_);
+    //
   }
   if(targetdist_pntr_->fesGridNeeded()) {
     setupFesGrid();
     targetdist_pntr_->linkFesGrid(fes_grid_pntr_);
+    // Added by Y. Isaac Yang to calculate the reweighting factor
+    if(isReweightGridActive())
+      targetdist_pntr_->linkFesRWGrid(fes_rwgrid_pntr_);
+    //
   }
   //
   targetdist_pntr_->updateTargetDist();
@@ -530,7 +700,13 @@ void LinearBasisSetExpansion::updateTargetDistribution() {
 
 void LinearBasisSetExpansion::readInRestartTargetDistribution(const std::string& grid_fname) {
   targetdist_pntr_->readInRestartTargetDistGrid(grid_fname);
-  if(biasCutoffActive()) {targetdist_pntr_->clearLogTargetDistGrid();}
+  if(biasCutoffActive()) {
+    targetdist_pntr_->clearLogTargetDistGrid();
+    // Added by Y. Isaac Yang to calculate the reweighting factor
+	if(isReweightGridActive())
+	  targetdist_pntr_->clearLogReweightGrid();
+	//
+  }
 }
 
 
@@ -562,6 +738,109 @@ void LinearBasisSetExpansion::calculateTargetDistAveragesFromGrid(const Grid* ta
   targetdist_averages[0] = 1.0;
   TargetDistAverages() = targetdist_averages;
 }
+
+// Added by Y. Isaac Yang to calculate the reweighting factor
+void LinearBasisSetExpansion::updateReweightingFactor(const Grid* grid_pntr,const Grid* bias_pntr) {
+  plumed_assert(grid_pntr!=NULL);
+  plumed_massert(grid_pntr->getSize()==bias_pntr->getSize(),"mismatch between the dimension of grid_pntr and bias_pntr");
+  Grid::index_t stride=1;
+  Grid::index_t rank=0;
+  //~ stride=mycomm_.Get_size();
+  //~ rank=mycomm_.Get_rank();
+  double log_sumebv=-1.0e38;
+  double rw_norm=0;
+  for(Grid::index_t l=rank; l<grid_pntr->getSize(); l+=stride){
+	std::vector<double> forces(nargs_);
+    std::vector<double> args = bias_pntr->getPoint(l);
+    bool all_inside=true;
+    //~ double curr_bias=getBiasAndForces(args,all_inside,forces);
+    double curr_bias = bias_pntr->getValue(l);
+    double weight = grid_pntr->getValue(l);
+    if(weight>0)
+    {
+      double logwt = std::log(weight);
+      // log_ebv = log (weight * exp( \beta * V(s,t)) )
+      double log_ebv= logwt + beta_ * curr_bias;
+    
+      // sumebv = log (\sum_{s} (weight * exp(\beta * V(s,t))))
+      if(l==rank)
+        log_sumebv = log_ebv;
+      else
+	    exp_added(log_sumebv,log_ebv);
+	  rw_norm += weight;
+    }
+  }
+  
+  //~ if(stride>1)
+  //~ {
+    //~ mycomm_.Sum(rw_norm);
+    //~ unsigned nw=0;
+    //~ if(mycomm_.Get_rank()==0)
+      //~ nw=mycomm_.Get_size();
+    //~ mycomm_.Bcast(nw,0);
+    //~ std::vector<double> all_log_sumebv(nw,0);
+    //~ if(mycomm_.Get_rank()==0)
+      //~ mycomm_.Allgather(log_sumebv,all_log_sumebv);
+    //~ mycomm_.Bcast(all_log_sumebv,0);
+    //~ log_sumebv=all_log_sumebv[0];
+    //~ for(unsigned i=1;i<stride;++i)
+      //~ exp_added(log_sumebv,all_log_sumebv[i]);
+  //~ }
+  
+  reweight_factor=(log_sumebv - std::log(rw_norm))/beta_;
+}
+void LinearBasisSetExpansion::updateReweightingFactor() {
+  if(isReweightGridActive())
+    updateReweightingFactor(reweight_grid_pntr_,bias_rwgrid_pntr_);
+  else
+    updateReweightingFactor(targetdist_grid_pntr_,bias_grid_pntr_);
+}
+
+void LinearBasisSetExpansion::updateReweightingFactorRevised(const Grid* fes_pntr,const Grid* bias_pntr) {
+  plumed_assert(fes_pntr!=NULL);
+  plumed_massert(fes_pntr->getSize()==bias_pntr->getSize(),"mismatch between the dimension of fes_pntr and bias_pntr");
+  Grid::index_t stride=1;
+  Grid::index_t rank=0;
+  //~ stride=mycomm_.Get_size();
+  //~ rank=mycomm_.Get_rank();
+  double log_sumebf=-1.0e38;
+  double log_sumebfpv=-1.0e38;
+  for(Grid::index_t l=rank; l<fes_pntr->getSize(); l+=stride){
+	std::vector<double> forces(nargs_);
+    std::vector<double> args = bias_pntr->getPoint(l);
+    bool all_inside=true;
+    //~ double curr_bias=getBiasAndForces(args,all_inside,forces);
+    double curr_bias=bias_pntr->getValue(l);
+    double curr_fes =fes_pntr->getValue(l);
+    
+    // log_ebv = log (weight * exp( \beta * F(s) )
+    double log_ebf = -1.0 * beta_ * curr_fes;
+    // log_ebv = log (weight * exp( \beta * F(s) + V(s,t)) )
+    double log_ebfpv= -1.0 * beta_ * (curr_fes + curr_bias);
+    
+    // sumebv = log (\sum_{s} (weight * exp(\beta * V(s,t))))
+    if(l==rank)
+    {
+      log_sumebf = log_ebf;
+      log_sumebfpv = log_ebfpv;
+	}
+    else
+    {
+	  exp_added(log_sumebf,log_ebf);
+	  exp_added(log_sumebfpv,log_ebfpv);
+	}
+  }
+  
+  reweight_factor_revised = (log_sumebf - log_sumebfpv)/beta_;
+}
+
+void LinearBasisSetExpansion::updateReweightingFactorRevised() {
+  if(isReweightGridActive())
+    updateReweightingFactorRevised(fes_rwgrid_pntr_,bias_rwgrid_pntr_);
+  else
+    updateReweightingFactorRevised(fes_grid_pntr_,bias_grid_pntr_);
+}
+//
 
 
 void LinearBasisSetExpansion::setBiasMinimumToZero() {

@@ -68,7 +68,13 @@ TargetDistribution::TargetDistribution(const ActionOptions&ao):
   fes_grid_pntr_(NULL),
   static_grid_calculated(false),
   allow_bias_cutoff_(true),
-  bias_cutoff_active_(false)
+  bias_cutoff_active_(false),
+  reweight_grid_active_(false),
+  reweight_grid_pntr_(NULL),
+  log_reweight_grid_pntr_(NULL),
+  bias_rwgrid_pntr_(NULL),
+  bias_withoutcutoff_rwgrid_pntr_(NULL),
+  fes_rwgrid_pntr_(NULL)
 {
   //
   if(keywords.exists("WELLTEMPERED_FACTOR")) {
@@ -111,6 +117,14 @@ TargetDistribution::~TargetDistribution() {
   if(log_targetdist_grid_pntr_!=NULL) {
     delete log_targetdist_grid_pntr_;
   }
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  if(reweight_grid_pntr_!=NULL){
+    delete reweight_grid_pntr_;
+  }
+  if(log_reweight_grid_pntr_!=NULL){
+    delete log_reweight_grid_pntr_;
+  }
+  //
   for(unsigned int i=0; i<targetdist_modifer_pntrs_.size(); i++) {
     delete targetdist_modifer_pntrs_[i];
   }
@@ -154,6 +168,17 @@ void TargetDistribution::linkFesGrid(Grid* fes_grid_pntr_in) {
   fes_grid_pntr_ = fes_grid_pntr_in;
 }
 
+// Added by Y. Isaac Yang to calculate the reweighting factor
+void TargetDistribution::linkBiasRWGrid(Grid* bias_rwgrid_pntr_in){
+  bias_rwgrid_pntr_ = bias_rwgrid_pntr_in;
+}
+void TargetDistribution::linkBiasWithoutCutoffRWGrid(Grid* bias_withoutcutoff_rwgrid_pntr_in){
+  bias_withoutcutoff_rwgrid_pntr_ = bias_withoutcutoff_rwgrid_pntr_in;
+}
+void TargetDistribution::linkFesRWGrid(Grid* fes_rwgrid_pntr_in){
+  fes_rwgrid_pntr_ = fes_rwgrid_pntr_in;
+}
+//
 
 void TargetDistribution::setupBiasCutoff() {
   if(!allow_bias_cutoff_) {
@@ -187,6 +212,20 @@ void TargetDistribution::setupGrids(const std::vector<Value*>& arguments, const 
   setupAdditionalGrids(arguments,min,max,nbins);
 }
 
+// Added by Y. Isaac Yang to calculate the reweighting factor
+void TargetDistribution::setupReweightGrids(const std::vector<Value*>& arguments,const std::vector<std::string>& min, const std::vector<std::string>& max, const std::vector<unsigned int>& nbins) {
+  unsigned int dimension = getDimension();
+  plumed_massert(arguments.size()==dimension,"TargetDistribution::setupGrids: mismatch between number of values given for grid parameters");
+  plumed_massert(min.size()==dimension,"TargetDistribution::setupReweightGrids: mismatch between number of values given for grid parameters");
+  plumed_massert(max.size()==dimension,"TargetDistribution::setupReweightGrids: mismatch between number of values given for grid parameters");
+  plumed_massert(nbins.size()==dimension,"TargetDistribution::setupReweightGrids: mismatch between number of values given for grid parameters");
+  reweight_grid_pntr_ =     new Grid("reweight",arguments,min,max,nbins,false,false);
+  log_reweight_grid_pntr_ = new Grid("log_reweight",arguments,min,max,nbins,false,false);
+  setReweightGridActive();
+  setupAdditionalReweightGrids(arguments,min,max,nbins);
+}
+//
+
 
 void TargetDistribution::calculateStaticDistributionGrid() {
   if(static_grid_calculated && !bias_cutoff_active_) {return;}
@@ -201,6 +240,21 @@ void TargetDistribution::calculateStaticDistributionGrid() {
     log_targetdist_grid_pntr_->setValue(l,-std::log(value));
   }
   log_targetdist_grid_pntr_->setMinToZero();
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  if(isReweightGridActive())
+  {
+    plumed_massert(reweight_grid_pntr_!=NULL,"the grids have not been setup using setupReweightGrids");
+    plumed_massert(log_reweight_grid_pntr_!=NULL,"the grids have not been setup using setupReweightGrids");
+    for(Grid::index_t l=0; l<reweight_grid_pntr_->getSize(); l++)
+    {
+      std::vector<double> rw_argument = reweight_grid_pntr_->getPoint(l);
+      double value = getValue(rw_argument);
+      reweight_grid_pntr_->setValue(l,value);
+      log_reweight_grid_pntr_->setValue(l,-std::log(value));
+    }
+    log_reweight_grid_pntr_->setMinToZero();
+  }
+  //
   static_grid_calculated = true;
 }
 
@@ -321,6 +375,28 @@ void TargetDistribution::updateBiasCutoffForTargetDistGrid() {
   }
   targetdist_grid_pntr_->scaleAllValuesAndDerivatives(1.0/norm);
   // log_targetdist_grid_pntr_->setMinToZero();
+  
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  if(isReweightGridActive())
+  {
+    std::vector<double> rw_integration_weights = GridIntegrationWeights::getIntegrationWeights(reweight_grid_pntr_);
+	double norm = 0.0;
+	for(Grid::index_t l=0; l<reweight_grid_pntr_->getSize(); l++)
+	{
+	  double value = reweight_grid_pntr_->getValue(l);
+	  double bias = getBiasWithoutCutoffRWGridPntr()->getValue(l);
+	  double deriv_factor_swf = 0.0;
+	  double swf = vesbias_pntr_->getBiasCutoffSwitchingFunction(bias,deriv_factor_swf);
+	  // this comes from the p(s)
+	  value *= swf;
+	  norm += rw_integration_weights[l]*value;
+	  // this comes from the derivative of V(s)
+	  value *= deriv_factor_swf;
+	  reweight_grid_pntr_->setValue(l,value);
+	}
+	reweight_grid_pntr_->scaleAllValuesAndDerivatives(1.0/norm);
+  }
+  //
 }
 
 void TargetDistribution::applyTargetDistModiferToGrid(TargetDistModifer* modifer_pntr) {
@@ -340,6 +416,24 @@ void TargetDistribution::applyTargetDistModiferToGrid(TargetDistModifer* modifer
   }
   targetdist_grid_pntr_->scaleAllValuesAndDerivatives(1.0/norm);
   log_targetdist_grid_pntr_->setMinToZero();
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  if(isReweightGridActive())
+  {
+    std::vector<double> rw_integration_weights = GridIntegrationWeights::getIntegrationWeights(reweight_grid_pntr_);
+    norm = 0.0;
+    for(Grid::index_t l=0; l<reweight_grid_pntr_->getSize(); l++)
+    {
+      double value = reweight_grid_pntr_->getValue(l);
+      std::vector<double> rw_cv_values = reweight_grid_pntr_->getPoint(l);
+      value = modifer_pntr->getModifedTargetDistValue(value,rw_cv_values);
+      norm += rw_integration_weights[l]*value;
+      reweight_grid_pntr_->setValue(l,value);
+      log_reweight_grid_pntr_->setValue(l,-std::log(value));
+    }
+    reweight_grid_pntr_->scaleAllValuesAndDerivatives(1.0/norm);
+    log_reweight_grid_pntr_->setMinToZero();
+  }
+  //
 }
 
 
@@ -349,11 +443,25 @@ void TargetDistribution::updateLogTargetDistGrid() {
     log_targetdist_grid_pntr_->setValue(l,-std::log(targetdist_grid_pntr_->getValue(l)));
   }
   log_targetdist_grid_pntr_->setMinToZero();
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  if(isReweightGridActive())
+  {
+	for(Grid::index_t l=0; l<reweight_grid_pntr_->getSize(); l++)
+    {
+      log_reweight_grid_pntr_->setValue(l,-std::log(reweight_grid_pntr_->getValue(l)));
+    }
+    log_reweight_grid_pntr_->setMinToZero();
+  }
+  //
 }
 
 
 void TargetDistribution::setMinimumOfTargetDistGridToZero() {
   targetDistGrid().setMinToZero();
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  if(isReweightGridActive())
+    reweightGrid().setMinToZero();
+  //
   normalizeTargetDistGrid();
   updateLogTargetDistGrid();
 }
@@ -378,6 +486,11 @@ void TargetDistribution::clearLogTargetDistGrid() {
   log_targetdist_grid_pntr_->clear();
 }
 
+// Added by Y. Isaac Yang to calculate the reweighting factor
+void TargetDistribution::clearLogReweightGrid(){
+  log_reweight_grid_pntr_->clear();
+}
+//
 
 void TargetDistribution::checkNanAndInf() {
   for(Grid::index_t l=0; l<targetdist_grid_pntr_->getSize(); l++)

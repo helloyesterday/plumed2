@@ -282,6 +282,40 @@ void TD_Custom::updateGrid() {
     plumed_merror(getName()+": The target distribution function cannot be normalized proberly. You should change the definition of the function used for the target distribution to avoid this. You can also use the SHIFT_TO_ZERO keyword to avoid this problem.");
   }
   logTargetDistGrid().setMinToZero();
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  if(isReweightGridActive())
+  {
+	std::vector<double> rw_integration_weights = GridIntegrationWeights::getIntegrationWeights(getReweightGridPntr());
+    double rw_norm = 0.0;
+  //
+    for(Grid::index_t l=0; l<reweightGrid().getSize(); l++) {
+      std::vector<double> rw_point = reweightGrid().getPoint(l);
+      for(unsigned int k=0; k<cv_var_str_.size() ; k++) {
+        try {
+          expression.getVariableReference(cv_var_str_[k]) = rw_point[cv_var_idx_[k]];
+        }   catch(PLMD::lepton::Exception& exc) {}
+      }
+      if(use_fes_) {
+        try {
+          expression.getVariableReference(fes_var_str_) = getFesRWGridPntr()->getValue(l);
+        } catch(PLMD::lepton::Exception& exc) {}
+      }
+      double rw_value = expression.evaluate();
+
+      if(rw_value<0.0 && !isTargetDistGridShiftedToZero()) {plumed_merror(getName()+": The reweight target distribution function gives negative values. You should change the definition of the function used for the target distribution to avoid this. You can also use the SHIFT_TO_ZERO keyword to avoid this problem.");}
+      reweightGrid().setValue(l,rw_value);
+      rw_norm += rw_integration_weights[l]*rw_value;
+      logReweightGrid().setValue(l,-std::log(rw_value));
+    }
+    if(rw_norm>0.0) {
+      reweightGrid().scaleAllValuesAndDerivatives(1.0/rw_norm);
+    }
+    else if(!isTargetDistGridShiftedToZero()) {
+      plumed_merror(getName()+": The target distribution function cannot be normalized proberly. You should change the definition of the function used for the target distribution to avoid this. You can also use the SHIFT_TO_ZERO keyword to avoid this problem.");
+    }
+    logReweightGrid().setMinToZero();
+  }
+  //
 }
 
 

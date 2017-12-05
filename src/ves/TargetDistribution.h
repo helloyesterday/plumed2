@@ -23,7 +23,9 @@
 #define __PLUMED_ves_TargetDistribution_h
 
 #include "core/Action.h"
-
+// Added by Y. Isaac Yang to calculate the reweighting factor
+#include "tools/Tools.h"
+//
 #include <vector>
 #include <string>
 #include <cmath>
@@ -90,6 +92,14 @@ private:
   void calculateStaticDistributionGrid();
   void updateBiasCutoffForTargetDistGrid();
   void checkNanAndInf();
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  bool reweight_grid_active_;
+  Grid* reweight_grid_pntr_;
+  Grid* log_reweight_grid_pntr_;
+  Grid* bias_rwgrid_pntr_;
+  Grid* bias_withoutcutoff_rwgrid_pntr_;
+  Grid* fes_rwgrid_pntr_;
+  //
 protected:
   void setStatic() {type_=static_targetdist;}
   void setDynamic() {type_=dynamic_targetdist;}
@@ -123,6 +133,14 @@ protected:
   void updateLogTargetDistGrid();
   //
   virtual void updateGrid() {calculateStaticDistributionGrid();}
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  virtual void setupAdditionalReweightGrids(const std::vector<Value*>&, const std::vector<std::string>&, const std::vector<std::string>&, const std::vector<unsigned int>&) {}
+  Grid& reweightGrid() const {return *reweight_grid_pntr_;}
+  Grid& logReweightGrid() const {return *log_reweight_grid_pntr_;}
+  Grid* getBiasRWGridPntr() const {return bias_rwgrid_pntr_;}
+  Grid* getBiasWithoutCutoffRWGridPntr() const {return bias_withoutcutoff_rwgrid_pntr_;}
+  Grid* getFesRWGridPntr() const {return fes_rwgrid_pntr_;}
+  //
 public:
   static void registerKeywords(Keywords&);
   explicit TargetDistribution(const ActionOptions&);
@@ -177,6 +195,17 @@ public:
   void update() {};
   void apply() {};
   void calculate() {};
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  virtual void linkBiasRWGrid(Grid*);
+  virtual void linkBiasWithoutCutoffRWGrid(Grid*);
+  virtual void linkFesRWGrid(Grid*);
+  bool isReweightGridActive() const {return reweight_grid_active_;}
+  void setReweightGridActive() {reweight_grid_active_=true;}
+  Grid* getReweightGridPntr() const {return reweight_grid_pntr_;}
+  Grid* getLogReweightGridPntr() const {return log_reweight_grid_pntr_;}
+  void clearLogReweightGrid();
+  void setupReweightGrids(const std::vector<Value*>&, const std::vector<std::string>&, const std::vector<std::string>&, const std::vector<unsigned int>&);
+  //
 };
 
 
@@ -198,6 +227,13 @@ inline
 void TargetDistribution::normalizeTargetDistGrid() {
   double normalization = normalizeGrid(targetdist_grid_pntr_);
   if(normalization<0.0) {plumed_merror(getName()+": something went wrong trying to normalize the target distribution, integrating over it gives a negative value.");}
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  if(isReweightGridActive())
+  {
+	double normalize_reweight = normalizeGrid(reweight_grid_pntr_);
+    if(normalize_reweight<0.0){plumed_merror(getName()+": something went wrong trying to normalize the target distribution, integrating over it gives a negative value.");}
+  }
+  //
 }
 
 

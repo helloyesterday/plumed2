@@ -157,6 +157,21 @@ void TD_WellTempered::updateGrid() {
   }
   targetDistGrid().scaleAllValuesAndDerivatives(1.0/norm);
   logTargetDistGrid().setMinToZero();
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  if(isReweightGridActive())
+  {
+    std::vector<double> rw_integration_weights = GridIntegrationWeights::getIntegrationWeights(getReweightGridPntr());
+    double rw_norm = 0.0;
+    for(Grid::index_t l=0; l<reweightGrid().getSize(); l++){
+      double rw_value = beta_prime * getFesRWGridPntr()->getValue(l);
+      logReweightGrid().setValue(l,rw_value);
+      rw_value = exp(-rw_value);
+      rw_norm += rw_integration_weights[l]*rw_value;
+      reweightGrid().setValue(l,rw_value);
+    }
+    reweightGrid().scaleAllValuesAndDerivatives(1.0/rw_norm);
+    logReweightGrid().setMinToZero();
+  }
 }
 
 

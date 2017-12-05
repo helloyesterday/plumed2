@@ -83,6 +83,18 @@ private:
   Grid* targetdist_grid_pntr_;
   //
   TargetDistribution* targetdist_pntr_;
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  double reweight_factor;
+  double reweight_factor_revised;
+  std::vector<std::string> reweight_min_;
+  std::vector<std::string> reweight_max_;
+  std::vector<unsigned int> reweight_bins_;
+  bool reweight_grid_active_;
+  Grid* bias_rwgrid_pntr_;
+  Grid* bias_withoutcutoff_rwgrid_pntr_;
+  Grid* fes_rwgrid_pntr_;
+  Grid* log_reweight_grid_pntr_;
+  Grid* reweight_grid_pntr_;
 public:
   static void registerKeywords( Keywords& keys );
   // Constructor
@@ -177,6 +189,20 @@ public:
   //
   double calculateReweightFactor() const;
   //
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  void writeBiasRWGridToFile(OFile&, const bool append=false) const;
+  void writeBiasWithoutCutoffRWGridToFile(OFile&, const bool append=false) const;
+  void writeReweightGridToFile(OFile&, const bool append=false) const;
+  void writeLogReweightGridToFile(OFile&, const bool append=false) const;
+  bool isReweightGridActive() const {return reweight_grid_active_;}
+  void setReweightGrid(const std::vector<unsigned int>&,const std::vector<std::string>&,const std::vector<std::string>&);
+  double getReweightFactor() const {return reweight_factor;}
+  double getReweightFactorRevised() const {return reweight_factor_revised;}
+  void updateReweightingFactor(const Grid*,const Grid*);
+  void updateReweightingFactor();
+  void updateReweightingFactorRevised();
+  void updateReweightingFactorRevised(const Grid*,const Grid*);
+  //
 private:
   //
   Grid* setupGeneralGrid(const std::string&, const bool usederiv=false);
@@ -184,6 +210,9 @@ private:
   void calculateTargetDistAveragesFromGrid(const Grid*);
   //
   bool isStaticTargetDistFileOutputActive() const;
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  Grid* setupGeneralGrid(const std::string&, const std::vector<std::string>&,const std::vector<std::string>&, const std::vector<unsigned int>&, const bool usederiv=false);
+  //
 };
 
 

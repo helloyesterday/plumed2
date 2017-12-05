@@ -705,6 +705,11 @@ Optimizer::Optimizer(const ActionOptions&ao):
       targetdist_proj_output_stride_=1000;
     }
   }
+  // Added By Y. Isaac Yang to calculte the reweighting factor
+  for(unsigned int i=0; i<nbiases_; i++){
+    bias_pntrs_[i]->updateReweightingFactor();
+  }
+  //
 
   if(ncoeffssets_==1) {
     log.printf("  Output Components:\n");
@@ -1045,7 +1050,10 @@ void Optimizer::update() {
       }
     }
 
-
+    // Added by Y. Isaac Yang to calculate the reweighting factor
+    for(unsigned int i=0; i<nbiases_; i++){
+      bias_pntrs_[i]->updateReweightingFactor();
+    }
     //
     if(isBiasOutputActive() && getIterationCounter()%getBiasOutputStride()==0) {
       writeBiasOutputFiles();

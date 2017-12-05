@@ -311,6 +311,9 @@ public:
   double calculateReweightFactor() const;
   //
   static void registerKeywords( Keywords& keys );
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  void updateReweightingFactor();
+  //
 };
 
 PLUMED_REGISTER_ACTION(VesLinearExpansion,"VES_LINEAR_EXPANSION")
@@ -325,6 +328,10 @@ void VesLinearExpansion::registerKeywords( Keywords& keys ) {
   VesBias::useProjectionArgKeywords(keys);
   //
   keys.use("ARG");
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  VesBias::useReweightBinKeywords(keys);
+  VesBias::useReweightLimitsKeywords(keys);
+  //
   keys.add("compulsory","BASIS_FUNCTIONS","the label of the one dimensional basis functions that should be used.");
   keys.addOutputComponent("force2","default","the instantaneous value of the squared force due to this bias potential.");
 }
@@ -366,6 +373,11 @@ VesLinearExpansion::VesLinearExpansion(const ActionOptions&ao):
   bias_expansion_pntr_ = new LinearBasisSetExpansion(getLabel(),getBeta(),comm,args_pntrs,basisf_pntrs_,getCoeffsPntr());
   bias_expansion_pntr_->linkVesBias(this);
   bias_expansion_pntr_->setGridBins(this->getGridBins());
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  if(isReweightGridActive())
+  {
+    bias_expansion_pntr_->setReweightGrid(getReweightBins(),getStrRWMax(),getStrRWMin());
+  }
   //
 
 
@@ -430,6 +442,10 @@ void VesLinearExpansion::calculate() {
 
   setBias(bias);
   valueForce2_->set(totalForce2);
+  // Added By Y. Isaac Yang to calculte the reweighting factor
+  setValueReweightFactor(getReweightFactor());
+  setValueReweightBias(bias - getReweightFactor());
+  //
   if(all_inside) {
     addToSampledAverages(coeffsderivs_values);
   }
@@ -441,6 +457,12 @@ void VesLinearExpansion::updateTargetDistributions() {
   setTargetDistAverages(bias_expansion_pntr_->TargetDistAverages());
 }
 
+// Added by Y. Isaac Yang to calculate the reweighting factor
+void VesLinearExpansion::updateReweightingFactor() {
+  bias_expansion_pntr_->updateReweightingFactor();
+  setReweightFactor(bias_expansion_pntr_->getReweightFactor());
+}
+//
 
 void VesLinearExpansion::restartTargetDistributions() {
   bias_expansion_pntr_->readInRestartTargetDistribution(getCurrentTargetDistOutputFilename());
@@ -464,6 +486,17 @@ void VesLinearExpansion::writeBiasToFile() {
     OFile* ofile_pntr2 = getOFile(getCurrentBiasOutputFilename("without-cutoff"),useMultipleWalkers());
     bias_expansion_pntr_->writeBiasWithoutCutoffGridToFile(*ofile_pntr2);
     ofile_pntr2->close(); delete ofile_pntr2;
+  }
+  if(isReweightGridActive())
+  {
+    OFile* ofile_pntr3 = getOFile(getCurrentBiasOutputFilename("reweight"),useMultipleWalkers());
+    bias_expansion_pntr_->writeBiasRWGridToFile(*ofile_pntr3);
+    ofile_pntr3->close(); delete ofile_pntr3;
+    if(biasCutoffActive()){
+      OFile* ofile_pntr4 = getOFile(getCurrentBiasOutputFilename("reweight-without-cutoff"),useMultipleWalkers());
+      bias_expansion_pntr_->writeBiasWithoutCutoffRWGridToFile(*ofile_pntr4);
+      ofile_pntr4->close(); delete ofile_pntr4;
+    }
   }
 }
 
@@ -519,6 +552,17 @@ void VesLinearExpansion::writeTargetDistToFile() {
   bias_expansion_pntr_->writeLogTargetDistGridToFile(*ofile2_pntr);
   ofile1_pntr->close(); delete ofile1_pntr;
   ofile2_pntr->close(); delete ofile2_pntr;
+  // Added by Y. Isaac Yang to calculate the reweighting factor
+  if(isReweightGridActive())
+  {
+    OFile* ofile3_pntr = getOFile(getCurrentTargetDistOutputFilename("rwgrid"),useMultipleWalkers());
+    OFile* ofile4_pntr = getOFile(getCurrentTargetDistOutputFilename("log_rwgrid"),useMultipleWalkers());
+    bias_expansion_pntr_->writeReweightGridToFile(*ofile3_pntr);
+    bias_expansion_pntr_->writeLogReweightGridToFile(*ofile4_pntr);
+    ofile3_pntr->close(); delete ofile3_pntr;
+    ofile4_pntr->close(); delete ofile4_pntr;
+  }
+  //
 }
 
 

@@ -118,6 +118,17 @@ private:
   std::vector< std::vector<std::string> > projection_args_;
   //
   bool calc_reweightfactor_;
+  // Added By Y. Isaac Yang to calculte the reweighting factor
+  bool reweight_grid_active_;
+  std::vector<unsigned int> reweight_bins_;
+  std::vector<std::string> str_rw_min_;
+  std::vector<std::string> str_rw_max_;
+  std::vector<double> reweight_min_;
+  std::vector<double> reweight_max_;
+  double reweight_factor;
+  Value* valueRct_;
+  Value* valueRbias_;
+  //
 private:
   void initializeCoeffs(CoeffsVector*);
   std::vector<double> computeCovarianceFromAverages(const unsigned int) const;
@@ -297,6 +308,25 @@ public:
   void updateReweightFactor();
   virtual double calculateReweightFactor() const;
   bool isReweightFactorCalculated() const {return calc_reweightfactor_;}
+  // Added By Y. Isaac Yang to calculte the reweighting factor
+  static void useReweightBinKeywords(Keywords&);
+  static void useReweightLimitsKeywords(Keywords&);
+  bool isReweightGridActive() const {return reweight_grid_active_;}
+  std::vector<unsigned int> getReweightBins() const {return reweight_bins_;}
+  void setReweightBins(const std::vector<unsigned int>&);
+  void setReweightBins(const unsigned int);
+  std::vector<double> getReweightMax() const {return reweight_max_;}
+  void setReweightMax(const std::vector<double>&);
+  std::vector<double> getReweightMin() const {return reweight_min_;}
+  void setReweightMin(const std::vector<double>&);
+  std::vector<std::string> getStrRWMax() const {return str_rw_max_;}
+  std::vector<std::string> getStrRWMin() const {return str_rw_min_;}
+  double getReweightFactor() const {return reweight_factor;}
+  void setReweightFactor(double reweight_factor_) {reweight_factor=reweight_factor_;}
+  void setValueReweightFactor(double reweight_factor_) {valueRct_->set(reweight_factor_);}
+  void setValueReweightBias(double reweight_bias) {valueRbias_->set(reweight_bias);}
+  virtual void updateReweightingFactor() {};
+  //
 };
 
 
