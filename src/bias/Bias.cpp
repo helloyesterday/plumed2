@@ -30,7 +30,10 @@ Bias::Bias(const ActionOptions&ao):
   ActionPilot(ao),
   ActionWithValue(ao),
   ActionWithArguments(ao),
-  outputForces(getNumberOfArguments(),0.0)
+  outputForces(getNumberOfArguments(),0.0),
+  ex_bias_linked_(false),
+  ex_bias_pntr_(NULL),
+  extra_bias_ratio_(0)
 {
   addComponentWithDerivatives("bias");
   componentIsNotPeriodic("bias");
@@ -60,6 +63,14 @@ void Bias::registerKeywords( Keywords& keys ) {
 void Bias::apply() {
   const unsigned noa=getNumberOfArguments();
   const unsigned ncp=getNumberOfComponents();
+  
+  // apply the ratio of extra bias
+  if(ex_bias_linked_)
+  {
+    for(unsigned i=0; i<noa; ++i)
+      outputForces[i]*=(1.0+extra_bias_ratio_);
+    extra_bias_ratio_=0;
+  }
 
   if(onStep()) {
     double gstr = static_cast<double>(getStride());
@@ -86,6 +97,20 @@ void Bias::apply() {
       getPntrToArgument(i)->addForce(f[i]);
     }
 
+}
+
+void Bias::linkExternalBias(Bias* ex_bias_pntr_in)
+{
+  if(ex_bias_pntr_==NULL){
+    ex_bias_pntr_ = ex_bias_pntr_in;
+  }
+  else {
+    std::string err_msg = "bias " + getLabel() + " of type " + getName() +
+      " has already been linked with ITS pointor " + ex_bias_pntr_->getLabel() +
+      " of type " + ex_bias_pntr_->getName() + ". You cannot link two ITS pointer to the same bias.";
+    plumed_merror(err_msg);
+  }
+  ex_bias_linked_=true;
 }
 
 }
