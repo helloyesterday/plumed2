@@ -46,6 +46,13 @@ class Bias :
   std::vector<double> outputForces;
 /// the pointer to the bias component
   Value *valueBias;
+/// linked to another bias
+/// the pointer be linked to another bias
+  bool ex_bias_linked_;
+  Bias* ex_bias_pntr_;
+/// the ratio of the extra bias
+  double extra_bias_ratio_;
+///
 protected:
 /// set the force from the bias on argument i, this automatically set the partial derivative of the bias with respect to i to -f
   void setOutputForce(int i,double f);
@@ -56,6 +63,12 @@ public:
   explicit Bias(const ActionOptions&ao);
   void apply();
   unsigned getNumberOfDerivatives();
+/// linked to another bias
+  void linkExternalBias(Bias*);
+  bool ExternalBiasLinked() const {return ex_bias_linked_;}
+  double getBias() const {return valueBias->get();}
+  void setExtraBiasRatio(double extra_bias_ratio_in) {extra_bias_ratio_=extra_bias_ratio_in;}
+///
 };
 
 inline

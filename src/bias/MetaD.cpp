@@ -1828,11 +1828,45 @@ void MetaD::computeReweightingFactor()
     for(unsigned j=0; j<ncv; ++j) vals[j]=dmin[j] + t_index[j]*grid_spacing[j];
 
     double currentb=getBiasAndDerivatives(vals,der.get());
-    sum1 += exp( afactor*currentb );
-    sum2 += exp( afactor2*currentb );
+    //~ sum1 += exp( afactor*currentb );
+    //~ sum2 += exp( afactor2*currentb );
+    if(i==rank)
+    {
+		sum1 = afactor*currentb;
+		sum2 = afactor2*currentb;
+	}
+	else
+	{
+		exp_added(sum1,afactor*currentb);
+		exp_added(sum2,afactor2*currentb);
+	}
   }
-  comm.Sum( sum1 ); comm.Sum( sum2 );
-  reweight_factor = kbt_ * std::log( sum1/sum2 );
+  
+  //~ comm.Sum( sum1 ); comm.Sum( sum2 );
+  if(stride>1)
+  {
+    std::vector<double> all_sum1(stride,0);
+    std::vector<double> all_sum2(stride,0);
+  
+    if(comm.Get_rank()==0)
+    {
+      multi_sim_comm.Allgather(sum1,all_sum1);
+      multi_sim_comm.Allgather(sum2,all_sum2);
+    }
+    comm.Bcast(all_sum1,0);
+    comm.Bcast(all_sum2,0);
+  
+    sum1 = all_sum1[0];
+    sum2 = all_sum2[0];
+    for(unsigned i=1;i<stride;++i)
+    {
+		exp_added(sum1,all_sum1[i]);
+		exp_added(sum2,all_sum2[i]);
+	}
+  }
+  
+  //~ reweight_factor = kbt_ * std::log( sum1/sum2 );
+  reweight_factor = kbt_ * ( sum1 - sum2 );
   getPntrToComponent("rct")->set(reweight_factor);
 }
 

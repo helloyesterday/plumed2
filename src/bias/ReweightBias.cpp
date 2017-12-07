@@ -69,6 +69,8 @@ namespace PLMD {
 namespace bias {
 
 class ReweightBias : public ReweightBase {
+private:
+  double bshift;
 public:
   static void registerKeywords(Keywords&);
   explicit ReweightBias(const ActionOptions&ao);
@@ -80,17 +82,20 @@ PLUMED_REGISTER_ACTION(ReweightBias,"REWEIGHT_BIAS")
 void ReweightBias::registerKeywords(Keywords& keys ) {
   ReweightBase::registerKeywords( keys ); keys.remove("ARG");
   keys.add("compulsory","ARG","*.bias","the biases that must be taken into account when reweighting");
+  keys.add("optional","SHIFT","a constant value to shift the bias potential (when they are too large or too small)");
 }
 
 ReweightBias::ReweightBias(const ActionOptions&ao):
   Action(ao),
-  ReweightBase(ao)
+  ReweightBase(ao),
+  bshift(0.0)
 {
+	parse("SHIFT",bshift);
 }
 
 double ReweightBias::getLogWeight() const {
   // Retrieve the bias
-  double bias=0.0; for(unsigned i=0; i<getNumberOfArguments(); ++i) bias+=getArgument(i);
+  double bias=bshift; for(unsigned i=0; i<getNumberOfArguments(); ++i) bias+=getArgument(i);
   return bias / simtemp;
 }
 
