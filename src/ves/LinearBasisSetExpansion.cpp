@@ -753,8 +753,8 @@ void LinearBasisSetExpansion::updateReweightingFactor(const Grid* grid_pntr,cons
 	std::vector<double> forces(nargs_);
     std::vector<double> args = bias_pntr->getPoint(l);
     bool all_inside=true;
-    //~ double curr_bias=getBiasAndForces(args,all_inside,forces);
-    double curr_bias = bias_pntr->getValue(l);
+    double curr_bias=getBiasAndForces(args,all_inside,forces);
+    //~ double curr_bias = bias_pntr->getValue(l);
     double weight = grid_pntr->getValue(l);
     if(weight>0)
     {
